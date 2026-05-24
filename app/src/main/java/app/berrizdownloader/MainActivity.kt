@@ -303,7 +303,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     saveThumbnailToGallery(
                         thumbnailUrl = thumbnailUrl,
                         title = state.value.previewTitle,
-                        mediaId = preparedDownload?.media?.id.orEmpty(),
                     )
                 }
             }.onSuccess {
@@ -617,11 +616,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             getApplication<Application>().getExternalFilesDir(Environment.DIRECTORY_MOVIES),
             "BerrizDown/${media.id}-${System.currentTimeMillis()}"
         ).apply { mkdirs() }
-        val safeTitle = playback.title
-            .replace(Regex("""[\\/:*?"<>|]"""), "_")
-            .take(80)
-            .ifBlank { "berriz" }
-        val outputTemplate = File(downloadDir, "$safeTitle-${media.id}-%(resolution)s.%(ext)s").absolutePath
+        val safeTitle = safeFileName(playback.title.ifBlank { "berriz" })
+        val outputTemplate = File(downloadDir, "$safeTitle.%(ext)s").absolutePath
 
         val request = YoutubeDLRequest(playback.hlsUrl).apply {
             addOption("--newline")
@@ -667,15 +663,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 detail = "거의 끝났습니다.",
             )
         }
-        val galleryUri = saveToGallery(output)
+        val galleryUri = saveToGallery(output, "$safeTitle.${output.extension.ifBlank { "mp4" }}")
         runCatching { downloadDir.deleteRecursively() }
         return galleryUri.toString()
     }
 
-    private fun saveToGallery(source: File): Uri {
+    private fun saveToGallery(source: File, displayName: String): Uri {
         val resolver = getApplication<Application>().contentResolver
         val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, source.name)
+            put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
             put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/BerrizDown")
             put(MediaStore.Video.Media.IS_PENDING, 1)
@@ -699,7 +695,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun saveThumbnailToGallery(thumbnailUrl: String, title: String, mediaId: String): Uri {
+    private fun saveThumbnailToGallery(thumbnailUrl: String, title: String): Uri {
         val connection = (URL(thumbnailUrl).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 20_000
@@ -723,8 +719,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             "image/webp" -> "webp"
             else -> "jpg"
         }
-        val suffix = mediaId.ifBlank { System.currentTimeMillis().toString() }
-        val displayName = "${safeFileName(title.ifBlank { "thumbnail" })}-$suffix-thumbnail.$extension"
+        val displayName = "${safeFileName(title.ifBlank { "thumbnail" })}.$extension"
 
         val resolver = getApplication<Application>().contentResolver
         val values = ContentValues().apply {
@@ -753,6 +748,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun safeFileName(value: String): String {
         return value
             .replace(Regex("""[\\/:*?"<>|]"""), "_")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+            .trim('.')
             .take(80)
             .ifBlank { "berriz" }
     }
@@ -876,9 +874,10 @@ class DownloadService : Service() {
             "BerrizDown/$mediaId-${System.currentTimeMillis()}"
         ).apply { mkdirs() }
         activeDownloadDir = downloadDir
+        val safeTitle = safeFileName(title.ifBlank { "berriz" })
         val outputTemplate = File(
             downloadDir,
-            "${safeFileName(title.ifBlank { "berriz" })}-$mediaId-%(resolution)s.%(ext)s"
+            "$safeTitle.%(ext)s"
         ).absolutePath
 
         val request = YoutubeDLRequest(playbackUrl).apply {
@@ -910,16 +909,16 @@ class DownloadService : Service() {
             ?: error("저장할 수 없습니다.")
         updateNotification("사진첩에 저장 중입니다.", "거의 끝났습니다.", null, ongoing = true)
         sendState(true, null, "", "사진첩에 저장 중입니다.", "거의 끝났습니다.")
-        val galleryUri = saveVideoToGallery(output)
+        val galleryUri = saveVideoToGallery(output, "$safeTitle.${output.extension.ifBlank { "mp4" }}")
         runCatching { downloadDir.deleteRecursively() }
         activeDownloadDir = null
         return galleryUri.toString()
     }
 
-    private fun saveVideoToGallery(source: File): Uri {
+    private fun saveVideoToGallery(source: File, displayName: String): Uri {
         val resolver = contentResolver
         val values = ContentValues().apply {
-            put(MediaStore.Video.Media.DISPLAY_NAME, source.name)
+            put(MediaStore.Video.Media.DISPLAY_NAME, displayName)
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
             put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/BerrizDown")
             put(MediaStore.Video.Media.IS_PENDING, 1)
@@ -1025,6 +1024,9 @@ class DownloadService : Service() {
     private fun safeFileName(value: String): String {
         return value
             .replace(Regex("""[\\/:*?"<>|]"""), "_")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+            .trim('.')
             .take(80)
             .ifBlank { "berriz" }
     }
