@@ -1,0 +1,23 @@
+.gradle/
+.kotlin/
+.idea/
+*.iml
+
+build/
+app/build/
+local.properties
+
+.DS_Store
+*.log
+
+# Release files are uploaded from GitHub Releases, not committed to source.
+release/
+*.apk
+*.aab
+
+# Desktop work is kept local for now. The public repo currently contains Android only.
+desktop/
+
+# Old helper/userscript files are not part of the Android public source package.
+BerrizDown.fixed.user.js
+.github/
