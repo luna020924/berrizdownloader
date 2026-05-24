@@ -11,8 +11,8 @@ android {
         applicationId = "app.berrizdownloader"
         minSdk = 29
         targetSdk = 37
-        versionCode = 12
-        versionName = "0.3.2"
+        versionCode = 100
+        versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
