@@ -264,15 +264,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences("berrizdown_settings", Context.MODE_PRIVATE)
 
     private val mediaRegex = Regex(
-        """(?:https?://)?(?:www\.)?(?:link\.)?berriz\.in/(?:(?:[a-z]{2})/|(?:app|web)/main/)?([A-Za-z0-9_-]+)/(media/content|live(?:/replay)?)/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:[/?#][^\s]*)?""",
+        """(?:https?://)?(?:www\.)?(?:link\.)?berriz\.in/(?:[a-z]{2}/)?(?:(?:app|web)/main/)?([A-Za-z0-9_-]+)/(media/content|live(?:/replay)?)/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:[/?#][^\s]*)?""",
         setOf(RegexOption.IGNORE_CASE)
     )
     private val noticeRegex = Regex(
-        """(?:https?://)?(?:www\.)?(?:link\.)?berriz\.in/(?:(?:[a-z]{2})/|(?:app|web)/main/)?([A-Za-z0-9_-]+)/notice/([0-9]+)(?:[/?#][^\s]*)?""",
+        """(?:https?://)?(?:www\.)?(?:link\.)?berriz\.in/(?:[a-z]{2}/)?(?:(?:app|web)/main/)?([A-Za-z0-9_-]+)/notice/([0-9]+)(?:[/?#][^\s]*)?""",
         setOf(RegexOption.IGNORE_CASE)
     )
     private val postRegex = Regex(
-        """(?:https?://)?(?:www\.)?(?:link\.)?berriz\.in/(?:(?:[a-z]{2})/|(?:app|web)/main/)?([A-Za-z0-9_-]+)/board/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/post/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:[/?#][^\s]*)?""",
+        """(?:https?://)?(?:www\.)?(?:link\.)?berriz\.in/(?:[a-z]{2}/)?(?:(?:app|web)/main/)?([A-Za-z0-9_-]+)/board/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/post/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:[/?#][^\s]*)?""",
         setOf(RegexOption.IGNORE_CASE)
     )
     private val processId = "berrizdown-active"
@@ -570,10 +570,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         val playback = fetchPlaybackInfo(media, cookies)
                         if (playback.kind == BerrizContentKind.Video) {
-                            if (playback.isDrm) {
-                                error("보호된 콘텐츠는 저장할 수 없습니다.")
-                            }
-                            if (playback.hlsUrl.isBlank()) {
+                            if (playback.downloadUrl().isBlank()) {
                                 error("이 콘텐츠는 저장할 수 없습니다.")
                             }
                         }
@@ -624,11 +621,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             downloadDocumentPrepared(prepared)
             return
         }
+        if (prepared.playback.isDrm) {
+            _state.update {
+                it.copy(
+                    isBusy = false,
+                    progress = null,
+                    status = "영상 저장을 지원하지 않습니다.",
+                    detail = "보호된 콘텐츠라 썸네일만 저장할 수 있습니다.",
+                )
+            }
+            return
+        }
 
         val app = getApplication<Application>()
         val intent = Intent(app, DownloadService::class.java).apply {
             action = DownloadServiceContract.ACTION_START
-            putExtra(DownloadServiceContract.EXTRA_PLAYBACK_URL, prepared.playback.hlsUrl)
+            putExtra(DownloadServiceContract.EXTRA_PLAYBACK_URL, prepared.playback.downloadUrl())
             putExtra(DownloadServiceContract.EXTRA_COOKIES, cookies)
             putExtra(DownloadServiceContract.EXTRA_TITLE, prepared.playback.title)
             putExtra(DownloadServiceContract.EXTRA_MEDIA_ID, prepared.media.id)
@@ -655,6 +663,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun downloadPreparedBatch(preparedItems: List<PreparedDownload>, cookies: String) {
         if (preparedItems.size == 1) {
             downloadPrepared(preparedItems.first(), cookies)
+            return
+        }
+
+        if (preparedItems.any { it.playback.kind == BerrizContentKind.Video && it.playback.isDrm }) {
+            _state.update {
+                it.copy(
+                    isBusy = false,
+                    progress = null,
+                    status = "일부 영상을 저장할 수 없습니다.",
+                    detail = "보호된 콘텐츠는 썸네일만 저장할 수 있습니다.",
+                )
+            }
             return
         }
 
@@ -771,7 +791,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         preparedItems.forEach { prepared ->
             array.put(
                 JSONObject()
-                    .put("playbackUrl", prepared.playback.hlsUrl)
+                    .put("playbackUrl", prepared.playback.downloadUrl())
                     .put("title", prepared.playback.title)
                     .put("mediaId", prepared.media.id)
                     .put("mediaType", prepared.media.type)
@@ -1316,7 +1336,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .ifBlank { mediaObject.optString("imageUrl") }
         val hlsUrl = playback.optJSONObject("hls")?.optString("playbackUrl").orEmpty()
         val dashUrl = playback.optJSONObject("dash")?.optString("playbackUrl").orEmpty()
-        val isDrm = playback.optBoolean("isDrm") || playback.has("drmInfo")
+        val isDrm = playback.optBoolean("isDrm", false) || playback.hasMeaningfulDrmInfo()
         Log.i(logTag, "Playback extracted title=$title hls=${hlsUrl.isNotBlank()} dash=${dashUrl.isNotBlank()} drm=$isDrm")
         return PlaybackInfo(
             title = title,
@@ -1336,7 +1356,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .ifBlank { mediaObject.optString("imageUrl") }
         val hlsUrl = playback.optJSONObject("hls")?.optString("playbackUrl").orEmpty()
         val dashUrl = playback.optJSONObject("dash")?.optString("playbackUrl").orEmpty()
-        val isDrm = playback.optBoolean("isDrm") || playback.has("drmInfo")
+        val isDrm = playback.optBoolean("isDrm", false) || playback.hasMeaningfulDrmInfo()
         return PlaybackInfo(
             title = title,
             hlsUrl = hlsUrl,
@@ -1344,6 +1364,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             isDrm = isDrm,
             thumbnailUrl = thumbnailUrl,
         )
+    }
+
+    private fun PlaybackInfo.downloadUrl(): String {
+        return hlsUrl.ifBlank { dashUrl }
+    }
+
+    private fun JSONObject.hasMeaningfulDrmInfo(): Boolean {
+        val drmInfo = opt("drmInfo") ?: return false
+        if (drmInfo == JSONObject.NULL) return false
+        return when (drmInfo) {
+            is JSONObject -> drmInfo.length() > 0
+            is JSONArray -> drmInfo.length() > 0
+            is String -> drmInfo.isNotBlank() && !drmInfo.equals("null", ignoreCase = true)
+            is Boolean -> drmInfo
+            else -> true
+        }
     }
 
     private fun JSONArray?.toImageUrls(): List<String> {
@@ -1430,7 +1466,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun previewDetail(preparedItems: List<PreparedDownload>, skippedDuplicates: Int): String {
-        val base = if (preparedItems.size == 1) {
+        val hasProtectedVideo = preparedItems.any {
+            it.playback.kind == BerrizContentKind.Video && it.playback.isDrm
+        }
+        val base = if (hasProtectedVideo) {
+            "보호된 콘텐츠라 영상 저장은 지원하지 않습니다. 썸네일은 저장할 수 있습니다."
+        } else if (preparedItems.size == 1) {
             "아래 콘텐츠가 맞으면 다운로드를 눌러주세요."
         } else if (preparedItems.all { it.playback.kind == BerrizContentKind.Video }) {
             "${preparedItems.size}개 영상을 백그라운드에서 순서대로 저장합니다."
@@ -1471,7 +1512,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val safeTitle = safeFileName(playback.title.ifBlank { "berriz" })
         val outputTemplate = File(downloadDir, "$safeTitle.%(ext)s").absolutePath
 
-        val request = YoutubeDLRequest(playback.hlsUrl).apply {
+        val request = YoutubeDLRequest(playback.downloadUrl()).apply {
             addOption("--newline")
             addOption("--no-mtime")
             addOption("--referer", "https://berriz.in/")
